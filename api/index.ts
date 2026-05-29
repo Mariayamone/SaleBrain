@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import app from "../server";
 
-/** Vercel rewrites to /api/index — restore the browser URL so Express routes match. */
+/** Vercel routes /api/* to /api/index — restore the browser URL so Express routes match. */
 function restoreRequestUrl(req: VercelRequest) {
   const raw =
     req.headers["x-vercel-original-url"] ??
