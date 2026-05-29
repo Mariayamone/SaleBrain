@@ -33,6 +33,7 @@ import { TelegramSimulator } from "./components/TelegramSimulator";
 import { SmartMarketing } from "./components/SmartMarketing";
 import { Onboarding } from "./components/Onboarding";
 import { Product, DeliveryZone, Order, ShopConfig, TelegramSession, SystemState } from "./types";
+import * as store from "./services/clientStore";
 
 // Complete localized dictionary for total English & Burmese translation sync
 const dict = {
@@ -334,27 +335,19 @@ export default function App() {
   const [ownerReplyText, setOwnerReplyText] = useState<string>("");
   const [activeVerificationReceipt, setActiveVerificationReceipt] = useState<Order | null>(null);
 
-  // Fetch current platform state from Express backend
   const fetchState = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const response = await fetch("/api/state");
-      if (response.ok) {
-        const contentType = response.headers.get("Content-Type") || "";
-        if (!contentType.includes("application/json")) {
-          return;
-        }
-        const data: SystemState = await response.json();
-        setStoreState(data);
-        if (data.sessions && Object.keys(data.sessions).length > 0) {
-          const keys = Object.keys(data.sessions);
-          if (!keys.includes(activeSessionId)) {
-            setActiveSessionId(keys[0]);
-          }
+      const data = store.getState();
+      setStoreState(data);
+      if (data.sessions && Object.keys(data.sessions).length > 0) {
+        const keys = Object.keys(data.sessions);
+        if (!keys.includes(activeSessionId)) {
+          setActiveSessionId(keys[0]);
         }
       }
     } catch (err) {
-      console.debug("Background poll err (silent):", err);
+      console.debug("State load err:", err);
     } finally {
       if (!silent) setLoading(false);
     }
@@ -386,22 +379,13 @@ export default function App() {
   };
 
   // Retrieve AI Strategizer
-  const fetchAiStrategy = async (force: boolean = false) => {
+  const fetchAiStrategy = async (_force: boolean = false) => {
     setLoadingAi(true);
     try {
-      const url = force 
-        ? `/api/ai/strategy?force=true&lang=${lang}` 
-        : `/api/ai/strategy?lang=${lang}`;
-      const res = await fetch(url, { method: "POST" });
-      if (res.ok) {
-        const contentType = res.headers.get("Content-Type") || "";
-        if (contentType.includes("application/json")) {
-          const data = await res.json();
-          setAiAnalysisText(data.strategy);
-        }
-      }
+      const data = store.getAiStrategy(lang);
+      setAiAnalysisText(data.strategy);
     } catch (err) {
-      console.warn("Failed quietly to fetch AI strategy briefing:", err);
+      console.warn("Failed to load AI strategy briefing:", err);
     } finally {
       setLoadingAi(false);
     }
@@ -413,20 +397,14 @@ export default function App() {
     if (!storeState) return;
     setSavingAction(true);
     try {
-      const response = await fetch("/api/onboarding", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(storeState.config)
-      });
-      if (response.ok) {
-        showToast(
-          lang === "my" 
-            ? "ဆိုင်အချက်အလက် စနစ် သိမ်းဆည်းပြီး တယ်လီဂရမ်နှင့် ချိတ်ဆက်ပြီးပါပြီ။ 🟢" 
-            : "Online Shop Settings configured! Telegram Bot activated. 🟢",
-          "success"
-        );
-        fetchState();
-      }
+      store.saveOnboarding(storeState.config);
+      showToast(
+        lang === "my"
+          ? "ဆိုင်အချက်အလက် စနစ် သိမ်းဆည်းပြီးပါပြီ။ 🟢"
+          : "Online Shop Settings saved successfully. 🟢",
+        "success"
+      );
+      fetchState();
     } catch (err) {
       console.error(err);
     } finally {
@@ -442,17 +420,15 @@ export default function App() {
     
     if (window.confirm(confirmationMsg)) {
       try {
-        const res = await fetch("/api/reset", { method: "POST" });
-        if (res.ok) {
-          showToast(
-            lang === "my"
-              ? "စမ်းသပ်မှုစနစ်အား မူလပထမ ပုသိမ်ဟလာဝါအရောင်းဆိုင်ပုံစံ ပြန်လည်သတ်မှတ်ပြီးပါပြီ။"
-              : "Platform state successfully refreshed to original Pathein Store data.",
-            "success"
-          );
-          fetchState();
-          fetchAiStrategy();
-        }
+        store.resetState();
+        showToast(
+          lang === "my"
+            ? "စမ်းသပ်မှုစနစ်အား မူလပထမ ပုသိမ်ဟလာဝါအရောင်းဆိုင်ပုံစံ ပြန်လည်သတ်မှတ်ပြီးပါပြီ။"
+            : "Platform state successfully refreshed to original Pathein Store data.",
+          "success"
+        );
+        fetchState();
+        fetchAiStrategy();
       } catch (err) {
         console.error(err);
       }
@@ -465,31 +441,17 @@ export default function App() {
     setSavingAction(true);
     try {
       const isEdit = !!editingProduct;
-      const url = "/api/products";
-      const payload = {
-        action: isEdit ? "edit" : "add",
-        product: isEdit ? { ...editingProduct, ...prodForm } : prodForm
-      };
-      
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        showToast(
-          isEdit 
-            ? (lang === "my" ? "ကုန်ပစ္စည်းအချက်အလက် ပြင်ဆင်မှု ပြီးမြောက်ပါပြီ။" : "Product information updated successfully!")
-            : (lang === "my" ? "ပစ္စည်းအသစ် ကတ်တလောက်ထဲ ထည့်သွင်းပြီးပါပြီ။" : "Added premium product to store catalog!"),
-          "success"
-        );
-        setShowProductModal(false);
-        setEditingProduct(null);
-        // Clear form
-        setProdForm({ name: "", category: "Desserts", price: 4500, description: "", stock: 25, image: "" });
-        fetchState();
-      }
+      store.mutateProducts(isEdit ? "edit" : "add", isEdit ? { ...editingProduct, ...prodForm } : prodForm);
+      showToast(
+        isEdit
+          ? (lang === "my" ? "ကုန်ပစ္စည်းအချက်အလက် ပြင်ဆင်မှု ပြီးမြောက်ပါပြီ။" : "Product information updated successfully!")
+          : (lang === "my" ? "ပစ္စည်းအသစ် ကတ်တလောက်ထဲ ထည့်သွင်းပြီးပါပြီ။" : "Added premium product to store catalog!"),
+        "success"
+      );
+      setShowProductModal(false);
+      setEditingProduct(null);
+      setProdForm({ name: "", category: "Desserts", price: 4500, description: "", stock: 25, image: "" });
+      fetchState();
     } catch (err) {
       console.error(err);
     } finally {
@@ -504,15 +466,9 @@ export default function App() {
 
     if (confirm(confirmMsg)) {
       try {
-        const res = await fetch("/api/products", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "delete", product: prod })
-        });
-        if (res.ok) {
-          showToast(lang === "my" ? "ကုန်ပစ္စည်း ဖျက်ပြီးပါပြီ။" : "Product deleted successfully.", "success");
-          fetchState();
-        }
+        store.mutateProducts("delete", prod);
+        showToast(lang === "my" ? "ကုန်ပစ္စည်း ဖျက်ပြီးပါပြီ။" : "Product deleted successfully.", "success");
+        fetchState();
       } catch (err) {
         console.error(err);
       }
@@ -523,21 +479,15 @@ export default function App() {
   const handleAddZone = async () => {
     if (!newZone.township.trim()) return;
     try {
-      const res = await fetch("/api/delivery-zones", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "add", zone: newZone })
-      });
-      if (res.ok) {
-        showToast(
-          lang === "my" 
-            ? `${newZone.township} အတွက် ပို့ဆောင်ခ သတ်မှတ်ပြီးပါပြီ။` 
-            : `Added township rate mapping for: ${newZone.township}`, 
-          "success"
-        );
-        setNewZone({ township: "", rate: 2000, deliveryTime: "1-2 Days" });
-        fetchState();
-      }
+      store.mutateDeliveryZone("add", { zone: newZone });
+      showToast(
+        lang === "my"
+          ? `${newZone.township} အတွက် ပို့ဆောင်ခ သတ်မှတ်ပြီးပါပြီ။`
+          : `Added township rate mapping for: ${newZone.township}`,
+        "success"
+      );
+      setNewZone({ township: "", rate: 2000, deliveryTime: "1-2 Days" });
+      fetchState();
     } catch (err) {
       console.error(err);
     }
@@ -545,20 +495,14 @@ export default function App() {
 
   const handleDeleteZone = async (idx: number, name: string) => {
     try {
-      const res = await fetch("/api/delivery-zones", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete", index: idx })
-      });
-      if (res.ok) {
-        showToast(
-          lang === "my"
-            ? `${name} ပို့ဆောင်ခ သတ်မှတ်ချက်ကို ဖျက်ထုတ်ပြီးပါပြီ။`
-            : `Removed township shipping rule: ${name}`,
-          "info"
-        );
-        fetchState();
-      }
+      store.mutateDeliveryZone("delete", { index: idx });
+      showToast(
+        lang === "my"
+          ? `${name} ပို့ဆောင်ခ သတ်မှတ်ချက်ကို ဖျက်ထုတ်ပြီးပါပြီ။`
+          : `Removed township shipping rule: ${name}`,
+        "info"
+      );
+      fetchState();
     } catch (err) {
       console.error(err);
     }
@@ -567,43 +511,30 @@ export default function App() {
   // Order payment screenshot evaluation trigger (Accept / Cancel)
   const handleUpdateOrderStatus = async (orderId: string, status: 'confirmed' | 'cancelled' | 'completed') => {
     try {
-      const res = await fetch("/api/orders/update", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId, status })
-      });
-      if (res.ok) {
-        showToast(
-          lang === "my"
-            ? `အော်ဒါ အခြေအနေကို [${status.toUpperCase()}] သို့ ပြောင်းလဲလိုက်ပါပြီ။ ဘောက်ချာပေးပို့လိုက်ပါသည်။`
-            : `Order status marked as [${status.toUpperCase()}]! Invoice sent.`,
-          "success"
-        );
-        setActiveVerificationReceipt(null);
-        fetchState();
-      }
+      store.updateOrderStatus(orderId, status);
+      showToast(
+        lang === "my"
+          ? `အော်ဒါ အခြေအနေကို [${status.toUpperCase()}] သို့ ပြောင်းလဲလိုက်ပါပြီ။`
+          : `Order status marked as [${status.toUpperCase()}]!`,
+        "success"
+      );
+      setActiveVerificationReceipt(null);
+      fetchState();
     } catch (err) {
       console.error(err);
     }
   };
 
-  // Live Manual Takeover over specified Customer session
   const handleTakeover = async (sessId: string) => {
     try {
-      const res = await fetch("/api/bot/takeover", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: sessId })
-      });
-      if (res.ok) {
-        showToast(
-          lang === "my"
-            ? "🔴 AI ဘော့တ်ကို ပိတ်လိုက်ပါပြီ။ ဆိုင်ရှင်တိုက်ရိုက်ဖြေကြားနေပါသည်။"
-            : "🔴 Bot deactivated. Owner intervention launched! Live chat active.",
-          "info"
-        );
-        fetchState();
-      }
+      store.botTakeover(sessId);
+      showToast(
+        lang === "my"
+          ? "🔴 AI ဘော့တ်ကို ပိတ်လိုက်ပါပြီ။ ဆိုင်ရှင်တိုက်ရိုက်ဖြေကြားနေပါသည်။"
+          : "🔴 Bot deactivated. Owner intervention launched! Live chat active.",
+        "info"
+      );
+      fetchState();
     } catch (err) {
       console.error(err);
     }
@@ -611,20 +542,14 @@ export default function App() {
 
   const handleReleaseToAi = async (sessId: string) => {
     try {
-      const res = await fetch("/api/bot/release", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: sessId })
-      });
-      if (res.ok) {
-        showToast(
-          lang === "my"
-            ? "🟢 AI ဘော့တ်ကို ပြန်လည်ဖွင့်လိုက်ပါပြီ။ ဘော့တ်မှ ဆက်လက်ဖြေကြားပါမည်။"
-            : "🟢 Bot reactivated. Candy taking over.",
-          "success"
-        );
-        fetchState();
-      }
+      store.botRelease(sessId);
+      showToast(
+        lang === "my"
+          ? "🟢 AI ဘော့တ်ကို ပြန်လည်ဖွင့်လိုက်ပါပြီ။ ဘော့တ်မှ ဆက်လက်ဖြေကြားပါမည်။"
+          : "🟢 Bot reactivated. Candy taking over.",
+        "success"
+      );
+      fetchState();
     } catch (err) {
       console.error(err);
     }
@@ -634,15 +559,9 @@ export default function App() {
     e.preventDefault();
     if (!ownerReplyText.trim()) return;
     try {
-      const res = await fetch("/api/bot/owner-reply", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: activeSessionId, content: ownerReplyText })
-      });
-      if (res.ok) {
-        setOwnerReplyText("");
-        fetchState();
-      }
+      store.botOwnerReply(activeSessionId, ownerReplyText);
+      setOwnerReplyText("");
+      fetchState();
     } catch (err) {
       console.error(err);
     }
@@ -716,15 +635,11 @@ export default function App() {
 
           // Persist settings to backing JSON state
           try {
-            await fetch("/api/onboarding", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                ...storeState.config,
-                shopName: profile.shopName,
-                ownerName: profile.ownerName,
-                onboardingCompleted: true
-              })
+            store.saveOnboarding({
+              ...storeState.config,
+              shopName: profile.shopName,
+              ownerName: profile.ownerName,
+              onboardingCompleted: true,
             });
             showToast(
               lang === "my"
@@ -817,18 +732,10 @@ export default function App() {
                 }
               }));
               // Synchronously tell backend to set onboardingCompleted to false so poller doesn't override
-              try {
-                await fetch("/api/onboarding", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    ...storeState.config,
-                    onboardingCompleted: false
-                  })
-                });
-              } catch (e) {
-                console.warn("Could not save onboarding state back to Server:", e);
-              }
+              store.saveOnboarding({
+                ...storeState.config,
+                onboardingCompleted: false,
+              });
             }}
             className="flex items-center gap-1.5 text-[9px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 p-1.5 px-3 rounded-lg border border-indigo-200 transition-colors cursor-pointer"
           >
